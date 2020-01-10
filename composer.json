@@ -21,8 +21,7 @@
     },
     "require-dev": {
         "kwn/php-rdkafka-stubs": "^2.0",
-        "phpunit/phpunit": "^7.5",
-        "symfony/profiler-pack": "^1.0"
+        "phpunit/phpunit": "^7.5"
     },
     "config": {
         "preferred-install": {
