@@ -6,6 +6,7 @@ use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use RdKafka\Conf;
 use RdKafka\KafkaConsumer;
+use RdKafka\TopicPartition;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
@@ -17,7 +18,7 @@ use Symfony\Component\Routing\Annotation\Route;
 class MetricsController extends AbstractController
 {
     /** @var KafkaConsumer */
-    public $consumer;
+    public $kafkaConsumer;
     /** @var LoggerInterface */
     private $logger;
 
@@ -89,7 +90,7 @@ class MetricsController extends AbstractController
             $conf->set($key, $val);
         }
 
-        $this->consumer = new KafkaConsumer($conf);
+        $this->kafkaConsumer = new KafkaConsumer($conf);
     }
 
     /**
@@ -100,7 +101,7 @@ class MetricsController extends AbstractController
      */
     public function metrics()
     {
-        $kafkaTopics = explode(" ", $_ENV['KAFKA_TOPICS']);
+        $kafkaTopics  = explode(" ", $_ENV['KAFKA_TOPICS']);
         $kafkaBrokers = explode("\n", $_ENV['KAFKA_BROKERS']);
 
         $options = [
@@ -116,54 +117,34 @@ class MetricsController extends AbstractController
 
         $this->initConsumer($options);
 
-        $this->consumer->subscribe($kafkaTopics);
-        $topicPartitions = $this->consumer->getAssignment();
-        //dump($topicPartitions);
+        $this->kafkaConsumer->subscribe($kafkaTopics);
+        $metadata = $this->kafkaConsumer->getMetadata(true, null, 60e3);
+        $result   = [];
+        foreach ($metadata->getTopics() as $topic) {
+            $topicName = $topic->getTopic();
+            if (in_array($topicName, $kafkaTopics)) {
+                $partitions = $topic->getPartitions();
+                foreach ($partitions as $partition) {
+                    $low  = 0;
+                    $high = 0;
+                    $this->kafkaConsumer->queryWatermarkOffsets($topicName, $partition->getId(), $low, $high, 60e3);
+                    $result[$topicName][$partition->getId()] = [
+                        'min'  => $low,
+                        'max'  => $high,
+                        'diff' => $high - $low,
+                    ];
 
-        $offsetPositions = $this->consumer->getOffsetPositions($topicPartitions);
-        //dump($offsetPositions);
+                    $topicPartition = new TopicPartition($topicName, $partition->getId());
+                    /** @var TopicPartition[] $topicPartitionsWithOffsets */
+                    $topicPartitionsWithOffsets = $this->kafkaConsumer->getOffsetPositions([$topicPartition]);
+                    dump(count($topicPartitionsWithOffsets));
+                    foreach ($topicPartitionsWithOffsets as $topicPartitionsWithOffset) {
+                        $result[$topicName][$partition->getId()]['current'] = $topicPartitionsWithOffset->getOffset();
+                    }
+                }
+            }
+        }
 
-//      foreach ($metadata->getTopics() as $topic) {
-//          $topicName = $topic->getTopic();
-//          if(in_array($topicName, $kafkaTopics)) {
-//              $partitions = $topic->getPartitions();
-//              foreach ($partitions as $partition) {
-//                  $consumer->consumer->queryWatermarkOffsets($topicName, $partition->getId(), $low, $high, 60e3);
-//              }
-//          }
-//      }
-
-        $expected = [
-            'my_first_topic'  => [
-                0 => [
-                    'min_offset'      => 8296,
-                    'max_offset'      => 8299,
-                    'diff_offset '    => 3,
-                    'current_offset ' => 8298,
-                ],
-                1 => [
-                    'min_offset'      => 8367,
-                    'max_offset'      => 8371,
-                    'diff_offset '    => 4,
-                    'current_offset ' => 8369,
-                ]
-            ],
-            'my_second_topic' => [
-                0 => [
-                    'min_offset'      => 8296,
-                    'max_offset'      => 8299,
-                    'diff_offset '    => 3,
-                    'current_offset ' => 8298,
-                ],
-                1 => [
-                    'min_offset'      => 8367,
-                    'max_offset'      => 8371,
-                    'diff_offset '    => 4,
-                    'current_offset ' => 8369,
-                ]
-            ],
-        ];
-
-        return $this->json($expected);
+        return $this->json($result);
     }
 }
