@@ -125,21 +125,19 @@ class MetricsController extends AbstractController
             if (in_array($topicName, $kafkaTopics)) {
                 $partitions = $topic->getPartitions();
                 foreach ($partitions as $partition) {
-                    $low  = 0;
+                    $low = 0;
                     $high = 0;
                     $this->kafkaConsumer->queryWatermarkOffsets($topicName, $partition->getId(), $low, $high, 60e3);
                     $result[$topicName][$partition->getId()] = [
+                        'partition' => $partition->getId(),
                         'min'  => $low,
                         'max'  => $high,
                         'diff' => $high - $low,
                     ];
-
                     $topicPartition = new TopicPartition($topicName, $partition->getId());
-                    /** @var TopicPartition[] $topicPartitionsWithOffsets */
-                    $topicPartitionsWithOffsets = $this->kafkaConsumer->getOffsetPositions([$topicPartition]);
-                    dump(count($topicPartitionsWithOffsets));
-                    foreach ($topicPartitionsWithOffsets as $topicPartitionsWithOffset) {
-                        $result[$topicName][$partition->getId()]['current'] = $topicPartitionsWithOffset->getOffset();
+                    $topicPartitionsWithOffset = $this->kafkaConsumer->getCommittedOffsets([$topicPartition], 60e3);
+                    foreach ($topicPartitionsWithOffset as $topicPartitionWithOffset) {
+                        $result[$topicName][$partition->getId()]['current'] = $topicPartitionWithOffset->getOffset();
                     }
                 }
             }
